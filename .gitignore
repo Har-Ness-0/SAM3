@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment/secrets
+.env
+.env.*
+
+# Video/data files
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Model/checkpoint files
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Python/build artifacts
+*.egg-info/
+build/
+dist/
+
+# IDE
+.vscode/
