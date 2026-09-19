@@ -41,7 +41,7 @@ volume = modal.Volume.from_name(
 
 @app.function(
     image=image,
-    gpu="T4",
+    gpu="A10",
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=1800,
