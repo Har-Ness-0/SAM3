@@ -1,4 +1,6 @@
 import modal
+import os
+import subprocess
 
 app = modal.App("sam3-video")
 
@@ -16,14 +18,18 @@ image = (
         "torchaudio",
         index_url="https://download.pytorch.org/whl/cu126",
     )
-    .run_commands(
-        "git clone https://github.com/facebookresearch/sam3.git /root/sam3",
-        "cd /root/sam3 && pip install -e '.[notebooks]'",
-    )
     .pip_install(
         "matplotlib",
         "pillow",
         "opencv-python",
+    )
+    .add_local_dir(
+        "sam3",
+        remote_path="/root/SAM3/sam3",
+        copy=True,
+    )
+    .run_commands(
+        "cd /root/SAM3/sam3 && pip install -e '.[notebooks]'",
     )
 )
 
@@ -35,21 +41,29 @@ volume = modal.Volume.from_name(
 
 @app.function(
     image=image,
-    gpu="A10G",
+    gpu="T4",
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=1800,
 )
-def run_sam3_video(video_filename: str, prompt_text: str):
+def run_sam3_video(
+    video_filename: str,
+    prompt_text: str,
+):
 
     import sys
     import pickle
     import cv2
     import numpy as np
 
-    sys.path.insert(0, "/root/sam3")
+    sys.path.insert(
+        0,
+        "/root/SAM3/sam3",
+    )
 
-    from sam3.model.sam3_video_predictor import Sam3VideoPredictor
+    from sam3.model.sam3_video_predictor import (
+        Sam3VideoPredictor
+    )
 
     # ---------------------------------------------------------
     # 1. Load SAM3
@@ -100,8 +114,14 @@ def run_sam3_video(video_filename: str, prompt_text: str):
     # 5. Save raw SAM3 results
     # ---------------------------------------------------------
 
-    with open("/data/results.pkl", "wb") as f:
-        pickle.dump(outputs_per_frame, f)
+    with open(
+        "/data/results.pkl",
+        "wb",
+    ) as f:
+        pickle.dump(
+            outputs_per_frame,
+            f,
+        )
 
     # ---------------------------------------------------------
     # 6. Open original video
@@ -110,39 +130,51 @@ def run_sam3_video(video_filename: str, prompt_text: str):
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
-        raise RuntimeError(f"Could not open video: {video_path}")
+        raise RuntimeError(
+            f"Could not open video: {video_path}"
+        )
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    print(f"Video: {width}x{height}")
-    print(f"FPS: {fps}")
-    print(f"Frames: {frame_count}")
-
-    # ---------------------------------------------------------
-    # 7. Create output MP4
-    # ---------------------------------------------------------
-
-    output_path = "/data/result.mp4"
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-    writer = cv2.VideoWriter(
-        output_path,
-        fourcc,
-        fps,
-        (width, height),
+    width = int(
+        cap.get(cv2.CAP_PROP_FRAME_WIDTH)
     )
 
-    if not writer.isOpened():
-        raise RuntimeError("Could not create output video")
+    height = int(
+        cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    )
+
+    frame_count = int(
+        cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    )
+
+    fps = cap.get(
+        cv2.CAP_PROP_FPS
+    )
+
+    print(
+        f"Video: {width}x{height}"
+    )
+
+    print(
+        f"FPS: {fps}"
+    )
+
+    print(
+        f"Frames: {frame_count}"
+    )
 
     # ---------------------------------------------------------
-    # 8. Render segmentation masks
+    # 7. Create results directory
+    # ---------------------------------------------------------
+
+    results_dir = "/data/results"
+
+    os.makedirs(
+        results_dir,
+        exist_ok=True,
+    )
+
+    # ---------------------------------------------------------
+    # 8. Render and save every frame
     # ---------------------------------------------------------
 
     frame_index = 0
@@ -154,33 +186,62 @@ def run_sam3_video(video_filename: str, prompt_text: str):
         if not ret:
             break
 
+        # -----------------------------------------------------
+        # Get SAM3 output for this frame
+        # -----------------------------------------------------
+
         if frame_index in outputs_per_frame:
 
-            outputs = outputs_per_frame[frame_index]
+            outputs = outputs_per_frame[
+                frame_index
+            ]
 
-            # SAM3 output structure can vary depending on version.
-            # Try to locate masks.
             masks = None
 
+            # SAM3 output structure can vary
             if isinstance(outputs, dict):
 
                 if "masks" in outputs:
+
                     masks = outputs["masks"]
 
                 elif "out_binary_masks" in outputs:
-                    masks = outputs["out_binary_masks"]
+
+                    masks = outputs[
+                        "out_binary_masks"
+                    ]
+
+            # -------------------------------------------------
+            # Convert mask to numpy
+            # -------------------------------------------------
 
             if masks is not None:
 
-                if hasattr(masks, "detach"):
-                    masks = masks.detach().cpu().numpy()
+                if hasattr(
+                    masks,
+                    "detach",
+                ):
 
-                masks = np.asarray(masks)
+                    masks = (
+                        masks
+                        .detach()
+                        .cpu()
+                        .numpy()
+                    )
+
+                masks = np.asarray(
+                    masks
+                )
 
                 # Remove unnecessary dimensions
-                masks = np.squeeze(masks)
+                masks = np.squeeze(
+                    masks
+                )
 
-                # If multiple objects exist
+                # -------------------------------------------------
+                # Multiple objects
+                # -------------------------------------------------
+
                 if masks.ndim == 3:
 
                     combined_mask = np.any(
@@ -188,38 +249,62 @@ def run_sam3_video(video_filename: str, prompt_text: str):
                         axis=0,
                     )
 
+                # -------------------------------------------------
+                # Single object
+                # -------------------------------------------------
+
                 elif masks.ndim == 2:
 
-                    combined_mask = masks > 0
+                    combined_mask = (
+                        masks > 0
+                    )
 
                 else:
 
                     combined_mask = None
 
+                # -------------------------------------------------
+                # Render mask
+                # -------------------------------------------------
+
                 if combined_mask is not None:
 
-                    combined_mask = combined_mask.astype(np.uint8)
+                    combined_mask = (
+                        combined_mask
+                        .astype(np.uint8)
+                    )
 
-                    # Resize if necessary
-                    if combined_mask.shape != (height, width):
+                    # Resize if needed
+                    if combined_mask.shape != (
+                        height,
+                        width,
+                    ):
 
                         combined_mask = cv2.resize(
                             combined_mask,
-                            (width, height),
-                            interpolation=cv2.INTER_NEAREST,
+                            (
+                                width,
+                                height,
+                            ),
+                            interpolation=(
+                                cv2.INTER_NEAREST
+                            ),
                         )
 
-                    # Create overlay
+                    # -------------------------------------------------
+                    # Green segmentation overlay
+                    # -------------------------------------------------
+
                     overlay = frame.copy()
 
-                    # Green segmentation region
-                    overlay[combined_mask > 0] = (
+                    overlay[
+                        combined_mask > 0
+                    ] = (
                         0,
                         255,
                         0,
                     )
 
-                    # Blend with original
                     frame = cv2.addWeighted(
                         frame,
                         0.7,
@@ -228,7 +313,10 @@ def run_sam3_video(video_filename: str, prompt_text: str):
                         0,
                     )
 
-                    # Draw contour
+                    # -------------------------------------------------
+                    # Draw segmentation contour
+                    # -------------------------------------------------
+
                     contours, _ = cv2.findContours(
                         combined_mask,
                         cv2.RETR_EXTERNAL,
@@ -243,7 +331,27 @@ def run_sam3_video(video_filename: str, prompt_text: str):
                         2,
                     )
 
-        writer.write(frame)
+        # ---------------------------------------------------------
+        # Save JPG
+        # ---------------------------------------------------------
+
+        output_filename = (
+            f"frame_{frame_index + 1}.jpg"
+        )
+
+        output_path = os.path.join(
+            results_dir,
+            output_filename,
+        )
+
+        cv2.imwrite(
+            output_path,
+            frame,
+        )
+
+        print(
+            f"Saved: {output_filename}"
+        )
 
         frame_index += 1
 
@@ -252,20 +360,130 @@ def run_sam3_video(video_filename: str, prompt_text: str):
     # ---------------------------------------------------------
 
     cap.release()
-    writer.release()
+
+    # ---------------------------------------------------------
+    # 10. Commit Modal Volume
+    # ---------------------------------------------------------
+
+    volume.commit()
 
     return (
-        f"Processed {len(outputs_per_frame)} frames. "
-        f"Saved /data/result.mp4 and /data/results.pkl"
+        f"Processed {frame_index} frames. "
+        f"Results saved to /data/results/"
     )
 
 
 @app.local_entrypoint()
 def main():
 
+    # =========================================================
+    # LOCAL PATH
+    # =========================================================
+
+    project_dir = os.path.dirname(
+        os.path.abspath(__file__)
+    )
+
+    video_path = os.path.join(
+        project_dir,
+        "test",
+        "sample_banana360.mp4",
+    )
+
+    # =========================================================
+    # Check that video exists locally
+    # =========================================================
+
+    if not os.path.exists(video_path):
+
+        raise FileNotFoundError(
+            f"Video not found:\n{video_path}"
+        )
+
+    print(
+        f"Using local video:\n{video_path}"
+    )
+
+    # =========================================================
+    # Upload video to Modal Volume
+    # =========================================================
+
+    print(
+        "Uploading sample_banana360.mp4 "
+        "to Modal..."
+    )
+
+    subprocess.run(
+        [
+            "modal",
+            "volume",
+            "put",
+            "sam3-data",
+            video_path,
+            "sample_banana360.mp4",
+        ],
+        check=True,
+    )
+
+    print(
+        "Video uploaded successfully."
+    )
+
+    # =========================================================
+    # Run SAM3 remotely
+    # =========================================================
+
     result = run_sam3_video.remote(
-        video_filename="bedroom.mp4",
-        prompt_text="person",
+        video_filename="sample_banana360.mp4",
+        prompt_text="banana",
     )
 
     print(result)
+
+    # =========================================================
+    # LOCAL RESULTS DIRECTORY
+    # =========================================================
+
+    local_results = os.path.join(
+        project_dir,
+        "results",
+    )
+
+    os.makedirs(
+        local_results,
+        exist_ok=True,
+    )
+
+    # =========================================================
+    # Download generated frames
+    # =========================================================
+
+    print(
+        "Downloading frames..."
+    )
+
+    subprocess.run(
+        [
+            "modal",
+            "volume",
+            "get",
+            "sam3-data",
+            "results",
+            local_results,
+        ],
+        check=True,
+    )
+
+    print()
+    print(
+        "========================================"
+    )
+    print(
+        "DONE"
+    )
+    print(
+        "========================================"
+    )
+    print(
+        f"Frames saved to:\n{local_results}"
+    )
