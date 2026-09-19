@@ -65,17 +65,15 @@ def run_sam3_video(
         Sam3VideoPredictor
     )
 
-    # ---------------------------------------------------------
+
     # 1. Load SAM3
-    # ---------------------------------------------------------
 
     predictor = Sam3VideoPredictor()
 
     video_path = f"/data/{video_filename}"
 
-    # ---------------------------------------------------------
     # 2. Start SAM3 session
-    # ---------------------------------------------------------
+
 
     response = predictor.handle_request({
         "type": "start_session",
@@ -84,9 +82,7 @@ def run_sam3_video(
 
     session_id = response["session_id"]
 
-    # ---------------------------------------------------------
     # 3. Add text prompt
-    # ---------------------------------------------------------
 
     predictor.handle_request({
         "type": "add_prompt",
@@ -95,9 +91,7 @@ def run_sam3_video(
         "text": prompt_text,
     })
 
-    # ---------------------------------------------------------
     # 4. Propagate through video
-    # ---------------------------------------------------------
 
     outputs_per_frame = {}
 
@@ -110,9 +104,7 @@ def run_sam3_video(
 
         outputs_per_frame[frame_index] = response["outputs"]
 
-    # ---------------------------------------------------------
     # 5. Save raw SAM3 results
-    # ---------------------------------------------------------
 
     with open(
         "/data/results.pkl",
@@ -123,9 +115,7 @@ def run_sam3_video(
             f,
         )
 
-    # ---------------------------------------------------------
     # 6. Open original video
-    # ---------------------------------------------------------
 
     cap = cv2.VideoCapture(video_path)
 
@@ -162,9 +152,7 @@ def run_sam3_video(
         f"Frames: {frame_count}"
     )
 
-    # ---------------------------------------------------------
     # 7. Create results directory
-    # ---------------------------------------------------------
 
     results_dir = "/data/results"
 
@@ -173,9 +161,7 @@ def run_sam3_video(
         exist_ok=True,
     )
 
-    # ---------------------------------------------------------
     # 8. Render and save every frame
-    # ---------------------------------------------------------
 
     frame_index = 0
 
@@ -186,9 +172,7 @@ def run_sam3_video(
         if not ret:
             break
 
-        # -----------------------------------------------------
         # Get SAM3 output for this frame
-        # -----------------------------------------------------
 
         if frame_index in outputs_per_frame:
 
@@ -211,9 +195,7 @@ def run_sam3_video(
                         "out_binary_masks"
                     ]
 
-            # -------------------------------------------------
             # Convert mask to numpy
-            # -------------------------------------------------
 
             if masks is not None:
 
@@ -238,9 +220,7 @@ def run_sam3_video(
                     masks
                 )
 
-                # -------------------------------------------------
                 # Multiple objects
-                # -------------------------------------------------
 
                 if masks.ndim == 3:
 
@@ -249,9 +229,7 @@ def run_sam3_video(
                         axis=0,
                     )
 
-                # -------------------------------------------------
                 # Single object
-                # -------------------------------------------------
 
                 elif masks.ndim == 2:
 
@@ -263,9 +241,7 @@ def run_sam3_video(
 
                     combined_mask = None
 
-                # -------------------------------------------------
                 # Render mask
-                # -------------------------------------------------
 
                 if combined_mask is not None:
 
@@ -291,10 +267,7 @@ def run_sam3_video(
                             ),
                         )
 
-                    # -------------------------------------------------
                     # Green segmentation overlay
-                    # -------------------------------------------------
-
                     overlay = frame.copy()
 
                     overlay[
@@ -313,9 +286,7 @@ def run_sam3_video(
                         0,
                     )
 
-                    # -------------------------------------------------
                     # Draw segmentation contour
-                    # -------------------------------------------------
 
                     contours, _ = cv2.findContours(
                         combined_mask,
@@ -331,9 +302,7 @@ def run_sam3_video(
                         2,
                     )
 
-        # ---------------------------------------------------------
         # Save JPG
-        # ---------------------------------------------------------
 
         output_filename = (
             f"frame_{frame_index + 1}.jpg"
@@ -355,15 +324,11 @@ def run_sam3_video(
 
         frame_index += 1
 
-    # ---------------------------------------------------------
     # 9. Close video
-    # ---------------------------------------------------------
 
     cap.release()
-
     # ---------------------------------------------------------
     # 10. Commit Modal Volume
-    # ---------------------------------------------------------
 
     volume.commit()
 
@@ -376,9 +341,7 @@ def run_sam3_video(
 @app.local_entrypoint()
 def main():
 
-    # =========================================================
     # LOCAL PATH
-    # =========================================================
 
     project_dir = os.path.dirname(
         os.path.abspath(__file__)
@@ -390,9 +353,7 @@ def main():
         "sample_banana360.mp4",
     )
 
-    # =========================================================
     # Check that video exists locally
-    # =========================================================
 
     if not os.path.exists(video_path):
 
@@ -404,9 +365,7 @@ def main():
         f"Using local video:\n{video_path}"
     )
 
-    # =========================================================
     # Upload video to Modal Volume
-    # =========================================================
 
     print(
         "Uploading sample_banana360.mp4 "
@@ -429,9 +388,7 @@ def main():
         "Video uploaded successfully."
     )
 
-    # =========================================================
     # Run SAM3 remotely
-    # =========================================================
 
     result = run_sam3_video.remote(
         video_filename="sample_banana360.mp4",
@@ -440,9 +397,7 @@ def main():
 
     print(result)
 
-    # =========================================================
     # LOCAL RESULTS DIRECTORY
-    # =========================================================
 
     local_results = os.path.join(
         project_dir,
@@ -454,9 +409,7 @@ def main():
         exist_ok=True,
     )
 
-    # =========================================================
     # Download generated frames
-    # =========================================================
 
     print(
         "Downloading frames..."
@@ -475,15 +428,11 @@ def main():
     )
 
     print()
-    print(
-        "========================================"
-    )
+
     print(
         "DONE"
     )
-    print(
-        "========================================"
-    )
+
     print(
         f"Frames saved to:\n{local_results}"
     )
